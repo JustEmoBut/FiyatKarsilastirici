@@ -10,6 +10,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Kategori Seçimi -->
@@ -23,29 +24,37 @@
                 <ComboBoxItem Content="RAM" />
                 <ComboBoxItem Content="SSD" />
             </ComboBox>
+            <CheckBox x:Name="CheckItopya" Content="İtopya" IsChecked="True" Margin="0,0,8,0"/>
+            <CheckBox x:Name="CheckIncehesap" Content="İnceHesap" IsChecked="True" Margin="0,0,8,0"/>
+            <CheckBox x:Name="CheckGamingGen" Content="GamingGenTR" IsChecked="True"/>
             <Button x:Name="UrunleriCekBtn" Content="Ürünleri Göster" Click="UrunleriCekBtn_Click"
-                    Style="{DynamicResource MaterialDesignRaisedButton}" Padding="16 0"/>
-            <ProgressBar x:Name="ProgressBar1"
-                 Height="24"
-                 Width="200"
-                 VerticalAlignment="Center"
-                 Style="{DynamicResource MaterialDesignLinearProgressBar}"
-                 Visibility="Collapsed"
-                 Minimum="0" Maximum="100"/>
-            <TextBlock x:Name="ProgressPercentText"
-               Margin="8,0,0,0"
-               VerticalAlignment="Center"
-               FontWeight="Bold"
-               Foreground="#886F00"
-               Visibility="Collapsed"
-               Text="0%" />
-            <TextBlock x:Name="ProgressStepText"
-           Margin="8,0,0,0"
-           VerticalAlignment="Center"
-           Foreground="#0077b6"
-           FontWeight="Bold"
-           Visibility="Collapsed"
-           Text="İşlem başlatılıyor..." />
+                    Style="{DynamicResource MaterialDesignRaisedButton}" Padding="16 0" Margin="16,0,0,0"/>
+            <!-- ProgressBar ve metinlerini grupla -->
+            <StackPanel Orientation="Vertical" VerticalAlignment="Center" Margin="24,0,0,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ProgressBar x:Name="ProgressBar1"
+                         Height="20"
+                         Width="160"
+                         VerticalAlignment="Center"
+                         Style="{DynamicResource MaterialDesignLinearProgressBar}"
+                         Visibility="Collapsed"
+                         Minimum="0" Maximum="100"/>
+                    <TextBlock x:Name="ProgressPercentText"
+                       Margin="8,0,0,0"
+                       VerticalAlignment="Center"
+                       FontWeight="Bold"
+                       Foreground="#886F00"
+                       Visibility="Collapsed"
+                       Text="0%" />
+                </StackPanel>
+                <TextBlock x:Name="ProgressStepText"
+                   Margin="0,4,0,0"
+                   VerticalAlignment="Center"
+                   Foreground="#0077b6"
+                   FontWeight="Bold"
+                   Visibility="Collapsed"
+                   Text="İşlem başlatılıyor..." />
+            </StackPanel>
         </StackPanel>
         <!-- Sıralama Seçimi -->
         <StackPanel Orientation="Horizontal" Margin="16,0,16,8" Grid.Row="1">
