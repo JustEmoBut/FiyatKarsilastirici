@@ -1,0 +1,84 @@
+﻿<Window x:Class="WPFPriceScraper.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        Title="Fiyat Karşılaştırma" Height="650" Width="900"
+        Background="{DynamicResource MaterialDesignPaper}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Kategori Seçimi -->
+        <StackPanel Orientation="Horizontal" Margin="16" Grid.Row="0">
+            <TextBlock Text="Kategori:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="KategoriBox" Width="200" Margin="0,0,8,0"
+                      SelectedIndex="0">
+                <ComboBoxItem Content="İşlemci" />
+                <ComboBoxItem Content="Ekran Kartı" />
+                <ComboBoxItem Content="Anakart" />
+                <ComboBoxItem Content="RAM" />
+                <ComboBoxItem Content="SSD" />
+            </ComboBox>
+            <Button x:Name="UrunleriCekBtn" Content="Ürünleri Göster" Click="UrunleriCekBtn_Click"
+                    Style="{DynamicResource MaterialDesignRaisedButton}" Padding="16 0"/>
+            <ProgressBar x:Name="ProgressBar1"
+                 Height="24"
+                 Width="200"
+                 VerticalAlignment="Center"
+                 Style="{DynamicResource MaterialDesignLinearProgressBar}"
+                 Visibility="Collapsed"
+                 Minimum="0" Maximum="100"/>
+            <TextBlock x:Name="ProgressPercentText"
+               Margin="8,0,0,0"
+               VerticalAlignment="Center"
+               FontWeight="Bold"
+               Foreground="#886F00"
+               Visibility="Collapsed"
+               Text="0%" />
+            <TextBlock x:Name="ProgressStepText"
+           Margin="8,0,0,0"
+           VerticalAlignment="Center"
+           Foreground="#0077b6"
+           FontWeight="Bold"
+           Visibility="Collapsed"
+           Text="İşlem başlatılıyor..." />
+        </StackPanel>
+        <!-- Sıralama Seçimi -->
+        <StackPanel Orientation="Horizontal" Margin="16,0,16,8" Grid.Row="1">
+            <TextBlock Text="Fiyat Sıralama:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="SiralamaBox" Width="160" SelectedIndex="0" SelectionChanged="SiralamaBox_SelectionChanged">
+                <ComboBoxItem Content="Fiyata Göre (Düşükten Yükseğe)" />
+                <ComboBoxItem Content="Fiyata Göre (Yüksekten Düşüğe)" />
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="16,0,16,8" Grid.Row="2">
+            <TextBox x:Name="AramaBox"
+             Width="250"
+             Height="30"
+             VerticalAlignment="Center"
+             Margin="0,0,8,0"
+             materialDesign:HintAssist.Hint="Ürün ara..."
+             TextChanged="AramaBox_TextChanged" />
+            <Button Content="Ara" Width="60" Height="30" Click="AraBtn_Click" />
+        </StackPanel>
+
+        <!-- Sonuç Tablosu -->
+        <DataGrid x:Name="SonucGrid" Grid.Row="3" Margin="16"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single"
+                  MouseDoubleClick="SonucGrid_MouseDoubleClick">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Ürün Adı" Binding="{Binding Name}" Width="*" />
+                <DataGridTextColumn Header="Site" Binding="{Binding Site}" Width="100"/>
+                <DataGridTextColumn Header="Fiyat" Binding="{Binding Price}" Width="120"/>
+                <DataGridTextColumn Header="Link" Binding="{Binding Url}" Width="320"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</Window>
