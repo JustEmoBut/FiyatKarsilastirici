@@ -5,6 +5,10 @@ using System.Diagnostics;
 using Microsoft.Playwright;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.IO;
+using System.Text.Json;
+using System.Text.Encodings.Web;
+using System.Text.Unicode;
 
 namespace WPFPriceScraper
 {
@@ -36,46 +40,68 @@ namespace WPFPriceScraper
         };
 
         private List<Product> tumUrunler = new List<Product>();
+        private Dictionary<string, List<Product>> cachedProducts = new Dictionary<string, List<Product>>();
+        private const string CACHE_FOLDER = "cache";
+        private const string CACHE_FILE = "products_cache.json";
 
-        private async void UrunleriCekBtn_Click(object sender, RoutedEventArgs e)
+        public MainWindow()
+        {
+            InitializeComponent();
+            InitializeCache();
+        }
+
+        private async void GosterBtn_Click(object sender, RoutedEventArgs e)
         {
             string? kategori = (KategoriBox.SelectedItem as ComboBoxItem)?.Content as string;
             if (string.IsNullOrWhiteSpace(kategori)) return;
 
-            SonucGrid.ItemsSource = null;
-            UrunleriCekBtn.IsEnabled = false;
+            // Cache key oluştur
+            string cacheKey = GenerateCacheKey(kategori);
 
-            ProgressBar1.Visibility = Visibility.Visible;
-            ProgressPercentText.Visibility = Visibility.Visible;
-            ProgressStepText.Visibility = Visibility.Visible;
-            ProgressBar1.Value = 0;
-            ProgressPercentText.Text = "0%";
-            ProgressStepText.Text = "Ürünler çekiliyor...";
+            // Cache'den veri okuma
+            var (cacheExists, cachedProducts) = await GetFromCacheAsync(cacheKey);
+            if (!cacheExists || cachedProducts == null)
+            {
+                MessageBox.Show("Bu kategori için önbelleğe alınmış veri bulunamadı.\nLütfen 'Güncelle' butonunu kullanarak verileri çekin.",
+                    "Veri Bulunamadı", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            tumUrunler = cachedProducts;
+            ApplySorting();
+            SonucGrid.ItemsSource = tumUrunler;
+        }
+
+        private async void GuncelleBtn_Click(object sender, RoutedEventArgs e)
+        {
+            string? kategori = (KategoriBox.SelectedItem as ComboBoxItem)?.Content as string;
+            if (string.IsNullOrWhiteSpace(kategori)) return;
+
+            // UI hazırlıkları
+            SonucGrid.ItemsSource = null;
+            GuncelleBtn.IsEnabled = false;
+            GosterBtn.IsEnabled = false;
+            SetupProgressUI();
 
             var urunler = new List<Product>();
-            int siteSayisi = (CheckItopya.IsChecked == true ? 1 : 0) +
-                             (CheckIncehesap.IsChecked == true ? 1 : 0) +
-                             (CheckGamingGen.IsChecked == true ? 1 : 0);
+            int siteSayisi = CalculateSelectedSiteCount();
             int currentStep = 0;
 
             if (siteSayisi == 0)
             {
-                ProgressStepText.Text = "Lütfen en az bir site seçiniz.";
-                ProgressBar1.Visibility = Visibility.Collapsed;
-                ProgressPercentText.Visibility = Visibility.Collapsed;
-                UrunleriCekBtn.IsEnabled = true;
+                HandleNoSitesSelected();
+                GuncelleBtn.IsEnabled = true;
+                GosterBtn.IsEnabled = true;
                 return;
             }
 
+            // Sitelerin verilerini çek
             if (CheckItopya.IsChecked == true)
             {
                 ProgressStepText.Text = "İtopya ürünleri çekiliyor...";
                 var ItopyaUrunler = await ItopyaKategoridekiTumUrunlerAsync(ItopyaKategoriler[kategori]);
                 urunler.AddRange(ItopyaUrunler);
-
-                currentStep++;
-                ProgressBar1.Value = (100 * currentStep) / siteSayisi;
-                ProgressPercentText.Text = $"{ProgressBar1.Value}%";
+                UpdateProgress(ref currentStep, siteSayisi);
             }
 
             if (CheckIncehesap.IsChecked == true)
@@ -83,10 +109,7 @@ namespace WPFPriceScraper
                 ProgressStepText.Text = "İncehesap ürünleri çekiliyor...";
                 var InceHesapUrunler = await IncehesapKategoridekiTumUrunlerAsync(IncehesapKategoriler[kategori], kategori);
                 urunler.AddRange(InceHesapUrunler);
-
-                currentStep++;
-                ProgressBar1.Value = (100 * currentStep) / siteSayisi;
-                ProgressPercentText.Text = $"{ProgressBar1.Value}%";
+                UpdateProgress(ref currentStep, siteSayisi);
             }
 
             if (CheckGamingGen.IsChecked == true)
@@ -94,28 +117,80 @@ namespace WPFPriceScraper
                 ProgressStepText.Text = "GamingGen ürünleri çekiliyor...";
                 var GamingGenUrunler = await GamingGenKategoridekiTumUrunlerAsync(GamingGenKategoriler[kategori], kategori);
                 urunler.AddRange(GamingGenUrunler);
-
-                currentStep++;
-                ProgressBar1.Value = (100 * currentStep) / siteSayisi;
-                ProgressPercentText.Text = $"{ProgressBar1.Value}%";
+                UpdateProgress(ref currentStep, siteSayisi);
             }
 
-            // Sıralama
-            if (SiralamaBox.SelectedIndex == 0)
-                urunler = urunler.OrderBy(x => x.PriceValue).ToList();
-            else
-                urunler = urunler.OrderByDescending(x => x.PriceValue).ToList();
+            // Cache'e kaydet
+            string cacheKey = GenerateCacheKey(kategori);
+            await SaveToCacheAsync(cacheKey, urunler);
 
             tumUrunler = urunler;
-            SonucGrid.ItemsSource = urunler;
+            ApplySorting();
+            SonucGrid.ItemsSource = tumUrunler;
 
+            // UI temizle
+            await CleanupUI();
+            GuncelleBtn.IsEnabled = true;
+            GosterBtn.IsEnabled = true;
+        }
+
+        private string GenerateCacheKey(string kategori)
+        {
+            var sites = new StringBuilder(kategori);
+            if (CheckItopya.IsChecked == true) sites.Append("_itopya");
+            if (CheckIncehesap.IsChecked == true) sites.Append("_incehesap");
+            if (CheckGamingGen.IsChecked == true) sites.Append("_gaminggen");
+            return sites.ToString();
+        }
+
+        private void SetupProgressUI()
+        {
+            ProgressBar1.Visibility = Visibility.Visible;
+            ProgressPercentText.Visibility = Visibility.Visible;
+            ProgressStepText.Visibility = Visibility.Visible;
+            ProgressBar1.Value = 0;
+            ProgressPercentText.Text = "0%";
+            ProgressStepText.Text = "Ürünler çekiliyor...";
+        }
+
+        private int CalculateSelectedSiteCount()
+        {
+            return (CheckItopya.IsChecked == true ? 1 : 0) +
+                   (CheckIncehesap.IsChecked == true ? 1 : 0) +
+                   (CheckGamingGen.IsChecked == true ? 1 : 0);
+        }
+
+        private void ApplySorting()
+        {
+            if (tumUrunler == null || !tumUrunler.Any()) return;
+
+            tumUrunler = SiralamaBox.SelectedIndex == 0
+                ? tumUrunler.OrderBy(x => x.PriceValue).ToList()
+                : tumUrunler.OrderByDescending(x => x.PriceValue).ToList();
+        }
+
+        private async Task CleanupUI()
+        {
             ProgressStepText.Text = "Tamamlandı!";
             await Task.Delay(1200);
 
             ProgressBar1.Visibility = Visibility.Collapsed;
             ProgressPercentText.Visibility = Visibility.Collapsed;
             ProgressStepText.Visibility = Visibility.Collapsed;
-            UrunleriCekBtn.IsEnabled = true;
+        }
+
+        private void HandleNoSitesSelected()
+        {
+            ProgressStepText.Text = "Lütfen en az bir site seçiniz.";
+            ProgressBar1.Visibility = Visibility.Collapsed;
+            ProgressPercentText.Visibility = Visibility.Collapsed;
+        }
+
+        private void UpdateProgress(ref int currentStep, int totalSteps)
+        {
+            currentStep++;
+            ProgressBar1.Value = (100 * currentStep) / totalSteps;
+            ProgressPercentText.Text = $"{ProgressBar1.Value}%";
         }
 
         private void AraBtn_Click(object sender, RoutedEventArgs e)
@@ -205,7 +280,7 @@ namespace WPFPriceScraper
                 using var playwright = await Playwright.CreateAsync();
                 var browserOptions = new BrowserTypeLaunchOptions
                 {
-                    Headless = false, // Sorun devam ederse false olarak bırakın
+                    Headless = true, // Sorun devam ederse false olarak bırakın
                     Args = new[] 
                     {
                         "--disable-dev-shm-usage",
@@ -335,7 +410,8 @@ namespace WPFPriceScraper
                             Price = fiyat.Trim(),
                             PriceValue = FiyatiSayisalYap(fiyat),
                             Url = url,
-                            Site = "İtopya"
+                            Site = "İtopya",
+                            LastUpdated = DateTime.Now
                         });
 
                         await Task.Delay(100); // Her ürün arası kısa bekleme
@@ -365,7 +441,7 @@ namespace WPFPriceScraper
                 using var playwright = await Playwright.CreateAsync();
                 var browserOptions = new BrowserTypeLaunchOptions
                 {
-                    Headless = false,
+                    Headless = true,
                     Args = new[] 
                     {
                         "--disable-dev-shm-usage",
@@ -488,7 +564,8 @@ namespace WPFPriceScraper
                                     Price = fiyat,
                                     PriceValue = FiyatiSayisalYap(fiyat),
                                     Url = url,
-                                    Site = "İncehesap"
+                                    Site = "İncehesap",
+                                    LastUpdated = DateTime.Now
                                 });
                             }
                             catch (Exception ex)
@@ -526,7 +603,7 @@ namespace WPFPriceScraper
                 using var playwright = await Playwright.CreateAsync();
                 var browserOptions = new BrowserTypeLaunchOptions
                 {
-                    Headless = false,
+                    Headless = true,
                     Args = new[] 
                     {
                         "--disable-dev-shm-usage",
@@ -551,7 +628,7 @@ namespace WPFPriceScraper
                 await page.GotoAsync(kategoriUrl, new PageGotoOptions 
                 { 
                     WaitUntil = WaitUntilState.NetworkIdle,
-                    Timeout = 40000 
+                    Timeout = 60000 
                 });
 
                 await Task.Delay(2000); // Sayfa tam yüklensin
@@ -635,7 +712,8 @@ namespace WPFPriceScraper
                                     Price = fiyat.Trim(),
                                     PriceValue = FiyatiSayisalYap(fiyat),
                                     Url = urunUrl,
-                                    Site = "Gaming.gen.tr"
+                                    Site = "Gaming.gen.tr",
+                                    LastUpdated = DateTime.Now
                                 });
                             }
                             catch (Exception ex)
@@ -704,7 +782,81 @@ namespace WPFPriceScraper
                 return 0;
             }
         }
+
+        private void InitializeCache()
+        {
+            if (!Directory.Exists(CACHE_FOLDER))
+                Directory.CreateDirectory(CACHE_FOLDER);
+        }
+
+        private async Task SaveToCacheAsync(string cacheKey, List<Product> products)
+        {
+            try
+            {
+                var cacheFilePath = Path.Combine(CACHE_FOLDER, CACHE_FILE);
+                CacheData cacheData;
+
+                if (File.Exists(cacheFilePath))
+                {
+                    var json = await File.ReadAllTextAsync(cacheFilePath, Encoding.UTF8);
+                    cacheData = JsonSerializer.Deserialize<CacheData>(json) ?? new CacheData();
+                }
+                else
+                {
+                    cacheData = new CacheData();
+                }
+
+                cacheData.Products[cacheKey] = products;
+
+                var options = new JsonSerializerOptions 
+                { 
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All)
+                };
+                
+                var updatedJson = JsonSerializer.Serialize(cacheData, options);
+                await File.WriteAllTextAsync(cacheFilePath, updatedJson, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Cache kaydetme hatası: {ex.Message}");
+            }
+        }
+
+        private async Task<(bool exists, List<Product>? products)> GetFromCacheAsync(string cacheKey)
+        {
+            try
+            {
+                var cacheFilePath = Path.Combine(CACHE_FOLDER, CACHE_FILE);
+                if (!File.Exists(cacheFilePath))
+                    return (false, null);
+
+                var json = await File.ReadAllTextAsync(cacheFilePath, Encoding.UTF8);
+                var options = new JsonSerializerOptions
+                {
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All)
+                };
+
+                var cacheData = JsonSerializer.Deserialize<CacheData>(json, options);
+
+                if (cacheData?.Products == null || !cacheData.Products.ContainsKey(cacheKey))
+                    return (false, null);
+
+                return (true, cacheData.Products[cacheKey]);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Cache okuma hatası: {ex.Message}");
+                return (false, null);
+            }
+        }
     }
+
+    public class CacheData
+    {
+        public Dictionary<string, List<Product>> Products { get; set; } = new();
+    }
+
     public class Product
     {
         public required string Name { get; set; }
@@ -712,5 +864,6 @@ namespace WPFPriceScraper
         public required decimal PriceValue { get; set; }
         public required string Url { get; set; }
         public required string Site { get; set; }
+        public DateTime LastUpdated { get; set; }
     }
 }
