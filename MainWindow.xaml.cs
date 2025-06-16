@@ -17,6 +17,7 @@ using System.Windows.Threading;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Linq;
+using Microsoft.Playwright;
 
 namespace WPFPriceScraper
 {
@@ -64,15 +65,8 @@ namespace WPFPriceScraper
 
             // 1. Adım: İtopya Ürünleri
             ProgressStepText.Text = "İtopya ürünleri çekiliyor...";
-            await Task.Run(() =>
-            {
-                try
-                {
-                    var itopyaUrunler = ItopyaKategoridekiTumUrunler(ItopyaKategoriler[kategori]);
-                    urunler.AddRange(itopyaUrunler);
-                }
-                catch { }
-            });
+            var itopyaUrunler = await ItopyaKategoridekiTumUrunlerAsync(ItopyaKategoriler[kategori]);
+            urunler.AddRange(itopyaUrunler);
 
             currentStep++;
             ProgressBar1.Value = (100 * currentStep) / totalSteps;
@@ -80,15 +74,8 @@ namespace WPFPriceScraper
 
             // 2. Adım: İncehesap Ürünleri
             ProgressStepText.Text = "İncehesap ürünleri çekiliyor...";
-            await Task.Run(() =>
-            {
-                try
-                {
-                    var incehesapUrunler = IncehesapKategoridekiTumUrunler(IncehesapKategoriler[kategori]);
-                    urunler.AddRange(incehesapUrunler);
-                }
-                catch { }
-            });
+            var incehesapUrunler = await IncehesapKategoridekiTumUrunlerAsync(IncehesapKategoriler[kategori]);
+            urunler.AddRange(incehesapUrunler);
 
             currentStep++;
             ProgressBar1.Value = (100 * currentStep) / totalSteps;
@@ -104,8 +91,6 @@ namespace WPFPriceScraper
             SonucGrid.ItemsSource = urunler;
 
             ProgressStepText.Text = "Tamamlandı!";
-
-            // Kısa bir süre sonra progress barı ve mesajları kapat
             await Task.Delay(1200);
 
             ProgressBar1.Visibility = Visibility.Collapsed;
@@ -250,119 +235,140 @@ namespace WPFPriceScraper
         }
 
         // --- İtopya: Kategorideki Tüm Ürünler ---
-        public List<Product> ItopyaKategoridekiTumUrunler(string kategoriUrl)
+        public async Task<List<Product>> ItopyaKategoridekiTumUrunlerAsync(string kategoriUrl)
         {
             var products = new List<Product>();
-            var service = FirefoxDriverService.CreateDefaultService();
-            service.HideCommandPromptWindow = true;
+            using var playwright = await Playwright.CreateAsync();
+            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = false });
+            var page = await browser.NewPageAsync();
+            await page.GotoAsync(kategoriUrl);
 
-            FirefoxOptions options = new FirefoxOptions();
-            options.AddArgument("--headless");
-
-            using (IWebDriver driver = new FirefoxDriver(service, options))
+            // Sayfayı aşağıya kaydırıp ürünlerin yüklenmesini bekle
+            int previousHeight = 0;
+            while (true)
             {
+                await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
+                await page.WaitForTimeoutAsync(1500); // Yüklenmesi için zaman ver
+
+                int currentHeight = await page.EvaluateAsync<int>("() => document.body.scrollHeight");
+                if (currentHeight == previousHeight)
+                    break; // Daha fazla yükleme yoksa çık
+                previousHeight = currentHeight;
+            }
+
+            // Ürünleri çek
+            var cards = await page.QuerySelectorAllAsync(".product");
+            foreach (var card in cards)
+            {
+                try
                 {
-                    driver.Navigate().GoToUrl(kategoriUrl);
-                    System.Threading.Thread.Sleep(7000);
+                    var name = await card.QuerySelectorAsync("a.title");
+                    var price = await card.QuerySelectorAsync("span.product-price strong");
+                    var urlElem = await card.QuerySelectorAsync("a.title");
 
-                    int lastCount = 0;
-                    while (true)
+                    if (name == null || price == null || urlElem == null)
+                        continue; // bu üründe eksik bilgi var, atla!
+
+                    string isim = await name.InnerTextAsync();
+                    string fiyat = await price.InnerTextAsync();
+                    string? url = await urlElem.GetAttributeAsync("href");
+                    if (!string.IsNullOrWhiteSpace(url) && !url.StartsWith("http"))
+                        url = "https://www.itopya.com" + url;
+
+                    products.Add(new Product
                     {
-                        ((IJavaScriptExecutor)driver).ExecuteScript("window.scrollTo(0, document.body.scrollHeight);");
-                        System.Threading.Thread.Sleep(2000);
-                        var cards = driver.FindElements(By.ClassName("product"));
-                        if (cards.Count == lastCount)
-                            break;
-                        lastCount = cards.Count;
-                    }
+                        Name = isim,
+                        Price = fiyat,
+                        PriceValue = FiyatiSayisalYap(fiyat),
+                        Url = url ?? "",
+                        Site = "İtopya"
+                    });
+                }
+                catch { }
+            }
+            return products;
+        }
 
-                    var allCards = driver.FindElements(By.ClassName("product"));
+        // --- İncehesap: Kategorideki Tüm Ürünler ---
+        public async Task<List<Product>> IncehesapKategoridekiTumUrunlerAsync(string kategoriUrl)
+        {
+            var products = new List<Product>();
+            using var playwright = await Playwright.CreateAsync();
+            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = false });
+            var page = await browser.NewPageAsync();
+            await page.GotoAsync(kategoriUrl);
+
+            int toplamSayfa = 1;
+            try
+            {
+                var sayfaLinkleri = await page.QuerySelectorAllAsync("nav[aria-label='Pagination'] a");
+                foreach (var link in sayfaLinkleri)
+                {
+                    var text = await link.InnerTextAsync();
+                    if (int.TryParse(text.Trim(), out int n))
+                        if (n > toplamSayfa)
+                            toplamSayfa = n;
+                }
+            }
+            catch { toplamSayfa = 1; }
+
+            HashSet<string> urlSet = new HashSet<string>();
+
+            for (int s = 1; s <= toplamSayfa; s++)
+            {
+                string pageUrl = kategoriUrl;
+                if (!kategoriUrl.EndsWith("/")) pageUrl += "/";
+                if (s > 1)
+                    pageUrl = kategoriUrl.TrimEnd('/') + $"/sayfa-{s}/";
+
+                await page.GotoAsync(pageUrl);
+                await page.WaitForSelectorAsync("a.product");
+
+                try
+                {
+                    var allCards = await page.QuerySelectorAllAsync("a.product");
                     foreach (var card in allCards)
                     {
                         try
                         {
-                            string name = card.FindElement(By.CssSelector("a.title")).Text.Trim();
-                            string? url = card.FindElement(By.CssSelector("a.title")).GetAttribute("href");
-                            if (string.IsNullOrWhiteSpace(url))
+                            // data-product JSON'unu oku
+                            var dataProduct = await card.GetAttributeAsync("data-product");
+                            if (string.IsNullOrEmpty(dataProduct)) continue;
+
+                            var productInfo = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(dataProduct);
+
+                            if (!productInfo.ContainsKey("category") || productInfo["category"] == null)
                                 continue;
 
-                            if (!url.StartsWith("http"))
-                                url = "https://www.itopya.com" + url;
-                            string price = card.FindElement(By.CssSelector("span.product-price strong")).Text.Trim();
+                            var kategori = productInfo["category"].ToString().Trim().ToLower();
+                            if (kategori != "işlemci")
+                                continue;
 
-                            TryAddProduct(products, name, url, price, "İtopya");
+                            var nameElem = await card.QuerySelectorAsync("div[itemprop='name']");
+                            var priceElem = await card.QuerySelectorAsync("span[itemprop='price']");
+                            string isim = (await nameElem?.InnerTextAsync())?.Trim() ?? "";
+                            string fiyat = (await priceElem?.InnerTextAsync())?.Trim() ?? "";
+                            string url = await card.GetAttributeAsync("href");
+                            if (!url.StartsWith("http"))
+                                url = "https://www.incehesap.com" + url;
+                            if (urlSet.Contains(url)) continue;
+                            urlSet.Add(url);
+
+                            products.Add(new Product
+                            {
+                                Name = isim,
+                                Price = fiyat,
+                                PriceValue = FiyatiSayisalYap(fiyat),
+                                Url = url,
+                                Site = "İncehesap"
+                            });
                         }
                         catch { }
                     }
                 }
-                return products;
+                catch { }
             }
-        }
-
-        // --- İncehesap: Kategorideki Tüm Ürünler ---
-        public List<Product> IncehesapKategoridekiTumUrunler(string kategoriUrl)
-        {
-            var products = new List<Product>();
-            var service = FirefoxDriverService.CreateDefaultService();
-            service.HideCommandPromptWindow = true;
-
-            FirefoxOptions options = new FirefoxOptions();
-            options.AddArgument("--headless");
-
-            using (IWebDriver driver = new FirefoxDriver(service, options))
-            {
-                driver.Navigate().GoToUrl(kategoriUrl);
-                System.Threading.Thread.Sleep(2000);
-
-                // Sayfa sayısını bulmaya devam et
-                int toplamSayfa = 1;
-                try
-                {
-                    var sayfaLinkleri = driver.FindElements(By.CssSelector("nav[aria-label='Pagination'] a"));
-                    foreach (var link in sayfaLinkleri)
-                    {
-                        int n;
-                        if (int.TryParse(link.Text.Trim(), out n))
-                            if (n > toplamSayfa)
-                                toplamSayfa = n;
-                    }
-                }
-                catch { toplamSayfa = 1; }
-
-                for (int s = 1; s <= toplamSayfa; s++)
-                {
-                    string pageUrl = kategoriUrl;
-                    if (!kategoriUrl.EndsWith("/")) pageUrl += "/";
-                    if (s > 1)
-                        pageUrl = kategoriUrl.TrimEnd('/') + $"/sayfa-{s}/";
-
-                    driver.Navigate().GoToUrl(pageUrl);
-                    System.Threading.Thread.Sleep(1500);
-
-                    // SADECE ana ürün gridinden çek!
-                    try
-                    {
-                        var grid = driver.FindElement(By.CssSelector("div.grid[itemtype='https://schema.org/ItemList']"));
-                        var allCards = grid.FindElements(By.CssSelector("a.product"));
-
-                        foreach (var card in allCards)
-                        {
-                            try
-                            {
-                                string name = card.FindElement(By.CssSelector("div[itemprop='name']")).Text.Trim();
-                                string price = card.FindElement(By.CssSelector("span[itemprop='price']")).Text.Trim();
-                                string? url = card.GetAttribute("href");
-                                if (string.IsNullOrWhiteSpace(url)) continue;
-                                if (!url.StartsWith("http")) url = "https://www.incehesap.com" + url;
-                                TryAddProduct(products, name, url, price, "İncehesap");
-                            }
-                            catch { }
-                        }
-                    }
-                    catch { /* Grid yoksa bu sayfa boş geç */ }
-                }
-            }
-            return products;
+            return products; // FONKSİYONUN EN SONUNDA MUTLAKA BU OLMALI!
         }
 
         // Fiyatı sayısala çeviren yardımcı fonksiyon
