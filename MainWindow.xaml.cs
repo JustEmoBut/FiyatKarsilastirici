@@ -43,11 +43,12 @@ namespace WPFPriceScraper
         private Dictionary<string, List<Product>> cachedProducts = new Dictionary<string, List<Product>>();
         private const string CACHE_FOLDER = "cache";
         private const string CACHE_FILE = "products_cache.json";
+        public CacheManager cacheManager;
 
         public MainWindow()
         {
             InitializeComponent();
-            InitializeCache();
+            cacheManager = new CacheManager(CACHE_FOLDER, CACHE_FILE);
         }
 
         private async void GosterBtn_Click(object sender, RoutedEventArgs e)
@@ -122,7 +123,7 @@ namespace WPFPriceScraper
 
             // Cache'e kaydet
             string cacheKey = GenerateCacheKey(kategori);
-            await SaveToCacheAsync(cacheKey, urunler);
+            await cacheManager.SaveAsync(cacheKey, urunler);
 
             tumUrunler = urunler;
             ApplySorting();
@@ -278,21 +279,7 @@ namespace WPFPriceScraper
             try
             {
                 using var playwright = await Playwright.CreateAsync();
-                var browserOptions = new BrowserTypeLaunchOptions
-                {
-                    Headless = true, // Sorun devam ederse false olarak bırakın
-                    Args = new[] 
-                    {
-                        "--disable-dev-shm-usage",
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-web-security",
-                        "--disable-features=IsolateOrigins,site-per-process",
-                        "--disable-web-security",
-                        "--disable-site-isolation-trials"
-                    },
-                    Timeout = 120000 // 120 saniye
-                };
+                var browserOptions = GetBrowserOptions();
 
                 await using var browser = await playwright.Chromium.LaunchAsync(browserOptions);
                 // Fix for CS0117: 'BrowserNewContextOptions' does not contain a definition for 'Timeout'
@@ -439,19 +426,7 @@ namespace WPFPriceScraper
             try
             {
                 using var playwright = await Playwright.CreateAsync();
-                var browserOptions = new BrowserTypeLaunchOptions
-                {
-                    Headless = true,
-                    Args = new[] 
-                    {
-                        "--disable-dev-shm-usage",
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-web-security",
-                        "--disable-features=IsolateOrigins,site-per-process"
-                    },
-                    Timeout = 60000
-                };
+                var browserOptions = GetBrowserOptions();
 
                 await using var browser = await playwright.Chromium.LaunchAsync(browserOptions);
                 var context = await browser.NewContextAsync(new BrowserNewContextOptions
@@ -601,19 +576,7 @@ namespace WPFPriceScraper
             try
             {
                 using var playwright = await Playwright.CreateAsync();
-                var browserOptions = new BrowserTypeLaunchOptions
-                {
-                    Headless = true,
-                    Args = new[] 
-                    {
-                        "--disable-dev-shm-usage",
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-web-security",
-                        "--disable-features=IsolateOrigins,site-per-process"
-                    },
-                    Timeout = 60000
-                };
+                var browserOptions = GetBrowserOptions();
 
                 await using var browser = await playwright.Chromium.LaunchAsync(browserOptions);
                 var context = await browser.NewContextAsync(new BrowserNewContextOptions
@@ -783,46 +746,6 @@ namespace WPFPriceScraper
             }
         }
 
-        private void InitializeCache()
-        {
-            if (!Directory.Exists(CACHE_FOLDER))
-                Directory.CreateDirectory(CACHE_FOLDER);
-        }
-
-        private async Task SaveToCacheAsync(string cacheKey, List<Product> products)
-        {
-            try
-            {
-                var cacheFilePath = Path.Combine(CACHE_FOLDER, CACHE_FILE);
-                CacheData cacheData;
-
-                if (File.Exists(cacheFilePath))
-                {
-                    var json = await File.ReadAllTextAsync(cacheFilePath, Encoding.UTF8);
-                    cacheData = JsonSerializer.Deserialize<CacheData>(json) ?? new CacheData();
-                }
-                else
-                {
-                    cacheData = new CacheData();
-                }
-
-                cacheData.Products[cacheKey] = products;
-
-                var options = new JsonSerializerOptions 
-                { 
-                    WriteIndented = true,
-                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All)
-                };
-                
-                var updatedJson = JsonSerializer.Serialize(cacheData, options);
-                await File.WriteAllTextAsync(cacheFilePath, updatedJson, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Cache kaydetme hatası: {ex.Message}");
-            }
-        }
-
         private async Task<(bool exists, List<Product>? products)> GetFromCacheAsync(string cacheKey)
         {
             try
@@ -849,6 +772,61 @@ namespace WPFPriceScraper
                 Debug.WriteLine($"Cache okuma hatası: {ex.Message}");
                 return (false, null);
             }
+        }
+
+        private BrowserTypeLaunchOptions GetBrowserOptions()
+        {
+            return new BrowserTypeLaunchOptions
+            {
+                Headless = true,
+                Args = new[] 
+                {
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process"
+                },
+                Timeout = 120000
+            };
+        }
+    }
+
+    public class CacheManager
+    {
+        private readonly string cacheFolder;
+        private readonly string cacheFile;
+        private readonly JsonSerializerOptions jsonOptions;
+
+        public CacheManager(string folder, string file)
+        {
+            cacheFolder = folder;
+            cacheFile = file;
+            jsonOptions = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
+            };
+            
+            if (!Directory.Exists(folder))
+                Directory.CreateDirectory(folder);
+        }
+
+        public async Task SaveAsync(string key, List<Product> products)
+        {
+            var path = Path.Combine(cacheFolder, cacheFile);
+            var cacheData = await LoadCacheDataAsync();
+            cacheData.Products[key] = products;
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(cacheData, jsonOptions));
+        }
+
+        private async Task<CacheData> LoadCacheDataAsync()
+        {
+            var path = Path.Combine(cacheFolder, cacheFile);
+            if (!File.Exists(path)) return new CacheData();
+            
+            var json = await File.ReadAllTextAsync(path);
+            return JsonSerializer.Deserialize<CacheData>(json, jsonOptions) ?? new CacheData();
         }
     }
 

@@ -154,12 +154,13 @@
                     <DataGridTextColumn Header="Site" 
                                       Binding="{Binding Site}" 
                                       Width="120"/>
-                    <DataGridTextColumn Header="Son Güncelleme" 
-                                      Binding="{Binding LastUpdated, StringFormat='{}{0:dd.MM.yyyy HH:mm}'}" 
-                                      Width="150"/>
                     <DataGridTextColumn Header="Fiyat" 
                                       Binding="{Binding Price}" 
                                       Width="120"/>
+                    <DataGridTextColumn Header="Son Güncelleme" 
+                                      Binding="{Binding LastUpdated, StringFormat='{}{0:dd.MM.yyyy HH:mm}'}" 
+                                      Width="150"/>
+
                 </DataGrid.Columns>
             </DataGrid>
         </materialDesign:Card>
