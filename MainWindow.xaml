@@ -147,6 +147,17 @@
                       IsReadOnly="True"
                       MouseDoubleClick="SonucGrid_MouseDoubleClick"
                       Style="{StaticResource MaterialDesignDataGrid}">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="ToolTip" Value="Ürünü tarayıcıda açmak için çift tıklayın." />
+                        <Setter Property="ToolTipService.Placement"
+                            Value="Mouse" />
+                        <Setter Property="ToolTipService.VerticalOffset"
+                            Value="10" />
+                        <Setter Property="ToolTipService.HorizontalOffset"
+                            Value="10" />
+                    </Style>
+                </DataGrid.RowStyle>
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="İsim" 
                                       Binding="{Binding Name}" 

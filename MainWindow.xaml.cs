@@ -1,14 +1,17 @@
-﻿using System.Windows;
+﻿using Microsoft.Playwright;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Text.Unicode;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Diagnostics;
-using Microsoft.Playwright;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.IO;
-using System.Text.Json;
-using System.Text.Encodings.Web;
-using System.Text.Unicode;
+using System.Globalization;
+using System.Linq;
 
 namespace WPFPriceScraper
 {
@@ -395,7 +398,7 @@ namespace WPFPriceScraper
                         {
                             Name = isim.Trim(),
                             Price = fiyat.Trim(),
-                            PriceValue = FiyatiSayisalYap(fiyat),
+                            PriceValue = ParsePrice(fiyat),
                             Url = url,
                             Site = "İtopya",
                             LastUpdated = DateTime.Now
@@ -537,7 +540,7 @@ namespace WPFPriceScraper
                                 {
                                     Name = isim,
                                     Price = fiyat,
-                                    PriceValue = FiyatiSayisalYap(fiyat),
+                                    PriceValue = ParsePrice(fiyat),
                                     Url = url,
                                     Site = "İncehesap",
                                     LastUpdated = DateTime.Now
@@ -673,7 +676,7 @@ namespace WPFPriceScraper
                                 {
                                     Name = urunAdi.Trim(),
                                     Price = fiyat.Trim(),
-                                    PriceValue = FiyatiSayisalYap(fiyat),
+                                    PriceValue = ParsePrice(fiyat),
                                     Url = urunUrl,
                                     Site = "Gaming.gen.tr",
                                     LastUpdated = DateTime.Now
@@ -704,46 +707,50 @@ namespace WPFPriceScraper
         }
 
         // Fiyatı sayısala çeviren yardımcı fonksiyon
-        public decimal FiyatiSayisalYap(string fiyat)
+        public decimal ParsePrice(string rawPrice)
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(fiyat)) return 0;
-
-                var temiz = new string(fiyat.Where(c => char.IsDigit(c) || c == ',' || c == '.').ToArray());
-
-                if (temiz.Contains(",") && temiz.Contains("."))
-                {
-                    int sonVirgul = temiz.LastIndexOf(',');
-                    string left = temiz.Substring(0, sonVirgul).Replace(".", "").Replace(",", "");
-                    string right = temiz.Substring(sonVirgul + 1);
-                    temiz = left + "." + right;
-                }
-                else if (temiz.Contains(","))
-                {
-                    temiz = temiz.Replace(".", "");
-                    temiz = temiz.Replace(",", ".");
-                }
-                else if (temiz.Contains("."))
-                {
-                    int sonNokta = temiz.LastIndexOf('.');
-                    if (temiz.Length - sonNokta == 3)
-                    {
-                        string left = temiz.Substring(0, sonNokta).Replace(".", "");
-                        string right = temiz.Substring(sonNokta + 1);
-                        temiz = left + "." + right;
-                    }
-                    else
-                    {
-                        temiz = temiz.Replace(".", "");
-                    }
-                }
-                return decimal.Parse(temiz, System.Globalization.CultureInfo.InvariantCulture);
-            }
-            catch
-            {
+            if (string.IsNullOrWhiteSpace(rawPrice))
                 return 0;
+
+            // Sadece rakamları, nokta ve virgül karakterlerini bırak
+            var clean = new string(rawPrice.Where(c => char.IsDigit(c) || c == '.' || c == ',').ToArray());
+
+            // Fiyat formatına göre uygun karakterleri dönüştür
+            // Türkiye'de genelde: 12.345,67  veya 12345,67
+            // İngilizce biçimde: 12,345.67 veya 12345.67
+
+            // Eğer hem nokta hem virgül varsa, son virgül ondalık ayırıcıdır
+            if (clean.Contains(",") && clean.Contains("."))
+            {
+                if (clean.LastIndexOf(',') > clean.LastIndexOf('.'))
+                {
+                    // "12.345,67" → "12345.67"
+                    clean = clean.Replace(".", "").Replace(",", ".");
+                }
+                else
+                {
+                    // "12,345.67" → "12345.67"
+                    clean = clean.Replace(",", "");
+                }
             }
+            else if (clean.Contains(","))
+            {
+                // "12345,67" → "12345.67"
+                clean = clean.Replace(".", "").Replace(",", ".");
+            }
+            else if (clean.Count(c => c == '.') == 1 && clean.Length - clean.LastIndexOf('.') <= 3)
+            {
+                // Tek nokta, son 2 hane içinse ondalık ayırıcıdır: "12345.67"
+                // Aksi halde: "12.345" → "12345"
+                // Hiçbir işlem gerekmez
+            }
+            else
+            {
+                // Tüm noktaları kaldır: "12.345" → "12345"
+                clean = clean.Replace(".", "");
+            }
+
+            return decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var result) ? result : 0;
         }
 
         private async Task<(bool exists, List<Product>? products)> GetFromCacheAsync(string cacheKey)
@@ -830,18 +837,72 @@ namespace WPFPriceScraper
         }
     }
 
-    public class CacheData
-    {
+        public class CacheData
+        {
         public Dictionary<string, List<Product>> Products { get; set; } = new();
-    }
+        }
+        public class Product : INotifyPropertyChanged
+        {
+            private string name;
+            private string price;
+            private decimal priceValue;
+            private string url;
+            private string site;
+            private DateTime lastUpdated;
 
-    public class Product
-    {
-        public required string Name { get; set; }
-        public required string Price { get; set; }
-        public required decimal PriceValue { get; set; }
-        public required string Url { get; set; }
-        public required string Site { get; set; }
-        public DateTime LastUpdated { get; set; }
+            /// <summary>Ürünün adı</summary>
+            public string Name
+            {
+                get => name;
+                set { if (name != value) { name = value; OnPropertyChanged(nameof(Name)); } }
+            }
+
+            /// <summary>Ürünün ham fiyat string'i</summary>
+            public string Price
+            {
+                get => price;
+                set { if (price != value) { price = value; OnPropertyChanged(nameof(Price)); } }
+            }
+
+            /// <summary>Fiyatın sayısal (decimal) karşılığı</summary>
+            public decimal PriceValue
+            {
+                get => priceValue;
+                set { if (priceValue != value) { priceValue = value; OnPropertyChanged(nameof(PriceValue)); } }
+            }
+
+            /// <summary>Ürünün detay sayfası URL'si</summary>
+            public string Url
+            {
+                get => url;
+                set { if (url != value) { url = value; OnPropertyChanged(nameof(Url)); } }
+            }
+
+            /// <summary>Ürünün çekildiği site ismi</summary>
+            public string Site
+            {
+                get => site;
+                set { if (site != value) { site = value; OnPropertyChanged(nameof(Site)); } }
+            }
+
+            /// <summary>Verinin son güncellenme tarihi</summary>
+            public DateTime LastUpdated
+            {
+                get => lastUpdated;
+                set { if (lastUpdated != value) { lastUpdated = value; OnPropertyChanged(nameof(LastUpdated)); } }
+            }
+
+            // (Opsiyonel) Karşılaştırma listesi için ek alan
+            private bool isInComparison;
+            /// <summary>Karşılaştırma listesine ekli mi?</summary>
+            public bool IsInComparison
+            {
+                get => isInComparison;
+                set { if (isInComparison != value) { isInComparison = value; OnPropertyChanged(nameof(IsInComparison)); } }
+            }
+
+            public event PropertyChangedEventHandler? PropertyChanged;
+            protected void OnPropertyChanged(string propertyName) =>
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
     }
-}
